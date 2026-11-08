@@ -8,7 +8,10 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <unistd.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <string.h>
+#include "contrib/win32/win32compat/w32fd.h"
 #include "../test_helper/test_helper.h"
 #include "tests.h"
 
@@ -700,6 +703,43 @@ socket_typical_ssh_payload_tests() {
 	freeaddrinfo(servinfo);
 }
 
+static void
+socket_connect_error_tests(void)
+{
+	static const struct {
+		int wsa_error;
+		int expected_errno;
+		const char *expected_message;
+	} cases[] = {
+		{ WSAEADDRNOTAVAIL, EADDRNOTAVAIL, "Address not available" },
+		{ WSAEHOSTUNREACH, EHOSTUNREACH, "No route to host" },
+		{ WSAENETDOWN, ENETDOWN, "Network is down" },
+		{ WSAENETUNREACH, ENETUNREACH, "Network is unreachable" },
+		{ WSAECONNREFUSED, ECONNREFUSED, "Connection refused" },
+	};
+	size_t i;
+
+	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		struct w32_io io = { 0 };
+		int result, connect_errno;
+
+		TEST_START(cases[i].expected_message);
+		io.write_overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+		ASSERT_PTR_NE(io.write_overlapped.hEvent, NULL);
+		io.internal.state = SOCK_CONNECTING;
+		io.write_details.pending = TRUE;
+		io.write_details.error = cases[i].wsa_error;
+
+		result = socketio_finish_connect(&io);
+		connect_errno = errno;
+
+		ASSERT_INT_EQ(result, -1);
+		ASSERT_INT_EQ(connect_errno, cases[i].expected_errno);
+		ASSERT_STRING_EQ(strerror(connect_errno), cases[i].expected_message);
+		TEST_DONE();
+	}
+}
+
 void
 socket_tests()
 {
@@ -708,4 +748,5 @@ socket_tests()
 	socket_nonblocking_io_tests();
 	socket_select_tests();
 	socket_typical_ssh_payload_tests();
+	socket_connect_error_tests();
 }
