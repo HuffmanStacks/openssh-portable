@@ -1,0 +1,97 @@
+name: HuffmanStacks native Windows OpenSSH candidate
+
+on:
+  push:
+    branches: [huffmanstacks/10.4-native-candidate]
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Prepare pinned vcpkg
+        shell: pwsh
+        run: |
+          $baseline = (Get-Content ./contrib/win32/openssh/vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+          $vcpkg = Join-Path $env:RUNNER_TEMP 'huffmanstacks-vcpkg'
+          git clone --filter=blob:none --no-checkout https://github.com/microsoft/vcpkg.git $vcpkg
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg checkout failed.' }
+          git -C $vcpkg checkout --detach $baseline
+          if ($LASTEXITCODE -ne 0 -or (git -C $vcpkg rev-parse HEAD) -cne $baseline) {
+            throw 'The vcpkg checkout did not match the manifest baseline.'
+          }
+          & (Join-Path $vcpkg 'bootstrap-vcpkg.bat') -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed.' }
+          & (Join-Path $vcpkg 'vcpkg.exe') integrate install
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg integration failed.' }
+          "VCPKG_ROOT=$vcpkg" >> $env:GITHUB_ENV
+
+      - name: Build with the Spectre-mitigated toolchain
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $spectre = 'Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre'
+          $vs = & $vswhere -latest -products '*' -version '[17.0,18.0)' -requires $spectre -property installationPath
+          if (-not $vs) { throw 'The runner lacks the VS 2022 x64 Spectre-mitigated runtime.' }
+          $env:VCPKG_VISUAL_STUDIO_PATH = $vs
+          $env:VCPKG_PLATFORM_TOOLSET = 'v143'
+          $msbuild = Join-Path $vs 'MSBuild\Current\Bin\amd64\MSBuild.exe'
+          $solution = (Resolve-Path './contrib/win32/openssh/Win32-OpenSSH.sln').Path
+          & $msbuild $solution /nologo /m:2 /t:Build /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
+          if ($LASTEXITCODE -ne 0) { throw "Native build exited with $LASTEXITCODE." }
+
+      - name: Run Win32 regressions and stage client
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path './bin/x64/Release').Path
+          $tests = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter 'unittest-win32compat.exe')
+          if ($tests.Count -ne 1) { throw 'Expected one Win32 compatibility test executable.' }
+          Push-Location $tests[0].DirectoryName
+          try {
+            & $tests[0].FullName -v
+            if ($LASTEXITCODE -ne 0) { throw "Win32 regression suite exited with $LASTEXITCODE." }
+          } finally {
+            Pop-Location
+          }
+          $ssh = Join-Path $root 'ssh.exe'
+          $version = (& $ssh -V 2>&1 | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $version -notmatch '^OpenSSH_for_Windows_10\.4p1') {
+            throw 'The native client did not report the expected upstream version.'
+          }
+          $stage = Join-Path $env:RUNNER_TEMP 'openssh-windows-x64-candidate'
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          foreach ($file in @('ssh.exe', 'libcrypto.dll')) {
+            Copy-Item -LiteralPath (Join-Path $root $file) -Destination $stage
+          }
+          Copy-Item -LiteralPath ./LICENCE -Destination $stage
+          $ports = './contrib/win32/openssh/vcpkg_installed/x64-custom/x64-custom/share'
+          foreach ($port in @('libressl', 'zlib', 'libfido2', 'libcbor')) {
+            Copy-Item -LiteralPath (Join-Path $ports "$port/copyright") -Destination (Join-Path $stage "LICENSE-$port.txt")
+          }
+          $files = @(Get-ChildItem -LiteralPath $stage -File | Sort-Object Name | ForEach-Object {
+            @{ name = $_.Name; bytes = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant() }
+          })
+          @{
+            status = 'native_candidate'
+            source = $env:GITHUB_SHA
+            runner = $env:RUNNER_OS
+            architecture = 'x64'
+            version = $version
+            regression_suite = 'unittest-win32compat'
+            signature = 'unsigned'
+            files = $files
+          } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $stage 'verification.json')
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: openssh-windows-x64-unsigned-candidate
+          path: ${{ runner.temp }}/openssh-windows-x64-candidate
+          if-no-files-found: error
+          retention-days: 7
