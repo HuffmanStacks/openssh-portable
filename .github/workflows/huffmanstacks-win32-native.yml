@@ -28,8 +28,20 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or (git -C $vcpkg rev-parse HEAD) -cne $registryCommit) {
             throw 'The vcpkg checkout did not match the tested registry revision.'
           }
-          & (Join-Path $vcpkg 'bootstrap-vcpkg.bat') -disableMetrics
-          if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed.' }
+          $tool = Join-Path $vcpkg 'vcpkg.exe'
+          $installed = if ($env:VCPKG_INSTALLATION_ROOT) { Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe' }
+          if ($installed -and (Test-Path -LiteralPath $installed -PathType Leaf)) {
+            Copy-Item -LiteralPath $installed -Destination $tool
+          } else {
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              & (Join-Path $vcpkg 'bootstrap-vcpkg.bat') -disableMetrics
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 3) { throw 'The vcpkg tool could not be downloaded.' }
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+          }
+          & $tool version
+          if ($LASTEXITCODE -ne 0) { throw 'The vcpkg tool did not start.' }
           & (Join-Path $vcpkg 'vcpkg.exe') integrate install
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg integration failed.' }
           "VCPKG_ROOT=$vcpkg" >> $env:GITHUB_ENV
@@ -43,6 +55,7 @@ jobs:
           if (-not $vs) { throw 'The runner lacks the VS 2022 x64 Spectre-mitigated runtime.' }
           $env:VCPKG_VISUAL_STUDIO_PATH = $vs
           $env:VCPKG_PLATFORM_TOOLSET = 'v143'
+          $env:VCPKG_DISABLE_METRICS = '1'
           $msbuild = Join-Path $vs 'MSBuild\Current\Bin\amd64\MSBuild.exe'
           $solution = (Resolve-Path './contrib/win32/openssh/Win32-OpenSSH.sln').Path
           & $msbuild $solution /nologo /m:2 /t:Build /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
