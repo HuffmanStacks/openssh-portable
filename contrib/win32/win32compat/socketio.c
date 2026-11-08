@@ -70,6 +70,14 @@ errno_from_WSAError(int wsaerrno)
 		return ETIMEDOUT;
 	case WSAECONNREFUSED:
 		return ECONNREFUSED;
+	case WSAEADDRNOTAVAIL:
+		return EADDRNOTAVAIL;
+	case WSAEHOSTUNREACH:
+		return EHOSTUNREACH;
+	case WSAENETDOWN:
+		return ENETDOWN;
+	case WSAENETUNREACH:
+		return ENETUNREACH;
 	case WSAEINPROGRESS:
 		return EINPROGRESS;
 	case WSAESHUTDOWN:

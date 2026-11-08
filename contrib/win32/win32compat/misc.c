@@ -97,7 +97,7 @@ char* _sys_errlist_ext[] = {
 	"Connection refused",					/* ECONNREFUSED    107 */
 	"Connection reset",					/* ECONNRESET      108 */
 	"Destination address required",				/* EDESTADDRREQ    109 */
-	"Host is unreachable",					/* EHOSTUNREACH    110 */
+	"No route to host",					/* EHOSTUNREACH    110 */
 	"Identifier removed",					/* EIDRM           111 */
 	"Operation in progress",				/* EINPROGRESS     112 */
 	"Socket is connected",					/* EISCONN         113 */
@@ -105,7 +105,7 @@ char* _sys_errlist_ext[] = {
 	"Message too long",					/* EMSGSIZE        115 */
 	"Network is down",					/* ENETDOWN        116 */
 	"Connection aborted by network",			/* ENETRESET       117 */
-	"Network unreachable",					/* ENETUNREACH     118 */
+	"Network is unreachable",				/* ENETUNREACH     118 */
 	"No buffer space available",				/* ENOBUFS         119 */
 	"No message is available on the STREAM head read queue",/* ENODATA         120 */
 	"Link has been severed",				/* ENOLINK         121 */
